@@ -131,6 +131,9 @@ SPACY_MODELS.set('fr', {
   const hasDotVenv = fs.existsSync(dotVenvPath)
   const { type: osType, cpuArchitecture } = SystemHelper.getInformation()
   /**
+   * IMPORTANT
+   * How to deal with CUDA and PyTorch support
+   * --
    * Install PyTorch with CUDA support
    * as it is required by the latest NVIDIA drivers for CUDA runtime APIs.
    * PyTorch will automatically download nvidia-* packages and bundle them.
@@ -141,8 +144,20 @@ SPACY_MODELS.set('fr', {
    * TCP server .venv as it is already installed (satisfied) in
    * the path mentioned above
    *
-   * @see https://github.com/pytorch/pytorch/blob/main/RELEASE.md#release-compatibility-matrix
+   * Current CUDA Toolkit to use is 12.4.1:
+   * @see https://developer.nvidia.com/cuda-12-4-1-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network
+   *
+   * If "nvcc --version" is not found, then need to map the PATH as below in ~/.bashrc:
+   * export PATH=/usr/local/cuda-12.4/bin${PATH:+:${PATH}}
+   * export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+   *
+   * Technically, we don't need CUDA at runtime as librairies are bundled with cx_Freeze.
+   * Need to verify the compatibility matrix between PyTorch and CUDA:
+   * @see IMPORTANT: https://github.com/pytorch/pytorch/blob/main/RELEASE.md#release-compatibility-matrix
    * @see https://pytorch.org/get-started/locally/
+   *
+   * @see CUDA driver x CUDA Toolkit compatibility: https://docs.nvidia.com/deploy/cuda-compatibility/#id3
+   *
    * @see https://stackoverflow.com/a/76972265/1768162
    * @see https://docs.nvidia.com/deeplearning/cudnn/latest/reference/support-matrix.html
    */
@@ -157,8 +172,8 @@ SPACY_MODELS.set('fr', {
       // There is no CUDA support on macOS
       const commandToExecute =
         osType === OSTypes.MacOS
-          ? 'pipenv run pip install --ignore-installed --force-reinstall torch==2.3.1'
-          : 'pipenv run pip install --ignore-installed --force-reinstall torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121'
+          ? 'pipenv run pip install --ignore-installed --force-reinstall torch==2.5.1'
+          : 'pipenv run pip install --ignore-installed --force-reinstall torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124'
 
       await command(commandToExecute, {
         shell: true,
