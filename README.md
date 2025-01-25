@@ -163,7 +163,7 @@ For full documentation, visit [docs.getleon.ai](https://docs.getleon.ai).
 
 [I'm documenting the journey on YouTube](https://www.youtube.com/@louisgyt) in developing our dear Leon. I also take you along in my daily life here in China.
 
-For non-French speakers, auto-translated English subtitles are available.
+For non-French speakers, translated English subtitles are available.
 
 ## 📺 Video
 

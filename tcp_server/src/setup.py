@@ -4,7 +4,7 @@ import os
 import sysconfig
 
 from version import __version__
-from lib.constants import TMP_PATH
+from lib.constants import TMP_PATH, PYTHON_VERSION
 
 """
 Increase the recursion limit to avoid RecursionError
@@ -15,12 +15,12 @@ sys.setrecursionlimit(sys.getrecursionlimit() * 10)
 """
 Delete content of all temporary directory. Only keep ".gitkeep" file.
 """
-print(f"Deleting content of {TMP_PATH}")
+print(f'Deleting content of {TMP_PATH}')
 for root, dirs, files in os.walk(TMP_PATH):
     for file in files:
         if file != '.gitkeep':
             os.remove(os.path.join(root, file))
-print(f"Deleted content of {TMP_PATH}")
+print(f'Deleted content of {TMP_PATH}')
 
 """
 Instead of injecting everything from a package,
@@ -43,7 +43,7 @@ options = {
         'include_files': [
             # Includes "av" module files manually to avoid ModuleNotFoundError
             # for "av.about" since cx_Freeze does not include about.py somehow
-            ('tcp_server/src/.venv/lib/python3.11/site-packages/av', 'lib/av')
+            (f'tcp_server/src/.venv/lib/python{PYTHON_VERSION}/site-packages/av', 'lib/av')
         ]
     }
 }
@@ -52,7 +52,7 @@ options = {
 if 'macos' not in sysconfig.get_platform():
     options['build_exe']['include_files'] = [
         *options['build_exe']['include_files'],
-        ('tcp_server/src/.venv/lib/python3.11/site-packages/nvidia/cudnn/lib', 'lib/nvidia/cudnn/lib')
+        (f'tcp_server/src/.venv/lib/python{PYTHON_VERSION}/site-packages/nvidia/cudnn/lib', 'lib/nvidia/cudnn/lib')
     ]
 
 # Include private libraries from the tokenizers package for Linux

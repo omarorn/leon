@@ -9,6 +9,8 @@ LIB_PATH = os.path.join(os.getcwd(), 'tcp_server', 'src', 'lib')
 if IS_RAN_FROM_BINARY:
     LIB_PATH = os.path.join(os.path.dirname(sys.executable), 'lib', 'lib')
 
+PYTHON_VERSION = '3.11'
+
 TMP_PATH = os.path.join(LIB_PATH, 'tmp')
 AUDIO_MODELS_PATH = os.path.join(os.getcwd(), 'core', 'data', 'models', 'audio')
 SETTINGS_PATH = os.path.join(os.getcwd(), 'tcp_server', 'settings.json')
