@@ -41,6 +41,9 @@ options = {
             'cymem'
         ],
         'include_files': [
+            # Includes "av" module files manually to avoid ModuleNotFoundError
+            # for "av.about" since cx_Freeze does not include about.py somehow
+            ('tcp_server/src/.venv/lib/python3.11/site-packages/av', 'lib/av')
         ]
     }
 }
