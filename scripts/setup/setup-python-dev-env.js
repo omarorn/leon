@@ -149,7 +149,8 @@ SPACY_MODELS.set('fr', {
    *
    * If "nvcc --version" is not found, then need to map the PATH as below in ~/.bashrc:
    * export PATH=/usr/local/cuda-12.4/bin${PATH:+:${PATH}}
-   * export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+   * # Make sure there is no LD_LIBRARY_PATH in current environment (`echo $LD_LIBRARY_PATH` should be empty) since it will override the system path and create conflict on build
+   * # export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
    *
    * Technically, we don't need CUDA at runtime as librairies are bundled with cx_Freeze.
    * Need to verify the compatibility matrix between PyTorch and CUDA:

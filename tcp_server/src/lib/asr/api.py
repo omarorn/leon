@@ -68,12 +68,12 @@ class ASR:
         self.frames_per_buffer = 1024
         self.rms_threshold = get_settings('asr')['rms_mic_threshold']
         # Duration of silence after which the audio data is considered as a new utterance (in seconds)
-        self.silence_duration = 1
+        self.silence_duration = get_settings('asr')['silence_duration']
         """
         Duration of silence after which the active listening is stopped (in seconds).
         Once stopped, the active listening can be resumed by starting a new recording event
         """
-        self.base_active_listening_duration = 12
+        self.base_active_listening_duration = get_settings('asr')['active_listening_duration']
         self.active_listening_duration = self.base_active_listening_duration
 
         self.audio = pyaudio.PyAudio()
