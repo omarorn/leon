@@ -18,8 +18,8 @@
     "url": "https://github.com/leon-ai/leon/issues"
   },
   "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
+    "node": ">=22.13.1",
+    "npm": ">=10.9.2"
   },
   "scripts": {
     "pre-commit": "lint-staged",
