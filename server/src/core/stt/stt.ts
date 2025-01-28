@@ -78,7 +78,7 @@ export default class STT {
           SERVER_CORE_PATH,
           'stt',
           'parsers',
-          PROVIDERS_MAP[STT_PROVIDER as STTProviders]
+          `${PROVIDERS_MAP[STT_PROVIDER as STTProviders]}.js`
         )
       )
       this._parser = new parser() as STTParser

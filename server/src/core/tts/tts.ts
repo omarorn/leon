@@ -84,7 +84,7 @@ export default class TTS {
           SERVER_CORE_PATH,
           'tts',
           'synthesizers',
-          PROVIDERS_MAP[TTS_PROVIDER as TTSProviders]
+          `${PROVIDERS_MAP[TTS_PROVIDER as TTSProviders]}.js`
         )
       )
       this.synthesizer = new synthesizer(
