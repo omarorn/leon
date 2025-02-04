@@ -1,11 +1,14 @@
+import os
 import pyaudio
 import audioop
 import time
 import torch
+import threading
 import numpy as np
+from openwakeword.model import Model as WakeWordModel
 from faster_whisper import WhisperModel
 
-from ..constants import ASR_MODEL_PATH
+from ..constants import ASR_MODEL_PATH, IS_WAKE_WORD_ENABLED, WAKE_WORD_MODEL_FOLDER_PATH
 from ..utils import ThrottledCallback, is_macos, get_settings
 
 
@@ -38,6 +41,8 @@ class ASR:
         if device == 'cpu':
             compute_type = 'int8_float32'
 
+        self.wake_word = None
+        self.wake_word_listening_thread = None
         self.compute_type = compute_type
         self.is_recording = False
 
@@ -51,12 +56,12 @@ class ASR:
         self.end_of_owner_speech_callback = end_of_owner_speech_callback
         self.active_listening_disabled_callback = active_listening_disabled_callback
 
-        self.wake_words = ['ok leon', 'okay leon', 'hi leon', 'hey leon', 'hello leon', 'heilion', 'alion', 'hyleon']
+        # self.wake_words = ['ok leon', 'okay leon', 'hi leon', 'hey leon', 'hello leon', 'heilion', 'alion', 'hyleon']
 
         self.device = device
         self.is_voice_activity_detected = False
         self.silence_start_time = 0
-        self.is_wake_word_detected = False
+        # self.is_wake_word_detected = False
         self.is_active_listening_enabled = False
         self.complete_text = ''
 
@@ -77,7 +82,7 @@ class ASR:
         self.active_listening_duration = self.base_active_listening_duration
 
         self.audio = pyaudio.PyAudio()
-        self.stream = None
+        self.mic_stream = None
         self.model = None
 
         model_params = {
@@ -89,6 +94,30 @@ class ASR:
         if self.device == 'cpu':
             model_params['cpu_threads'] = 4
 
+        wake_word_model_name = get_settings('wake_word')['model_file_name']
+        wake_word_model_path = os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, wake_word_model_name)
+        should_init_wake_word = True
+
+        if not IS_WAKE_WORD_ENABLED:
+            self.log('Wake word is disabled')
+            should_init_wake_word = False
+        if not os.path.exists(wake_word_model_path):
+            self.log(f'Wake word model not found at {wake_word_model_path}')
+            should_init_wake_word = False
+
+        self.open_mic_stream()
+
+        if should_init_wake_word:
+            self.wake_word = WakeWord(
+                asr=self,
+                model_path=wake_word_model_path,
+                device=get_settings('wake_word')['device'],
+                detection_threshold=get_settings('wake_word')['detection_threshold']
+            )
+            # Use thread to not block the current thread as wake word starts listening (loop)
+            # self.start_wake_word_listening_thread()
+            # TODO: do not use thread and just handle in a single loop
+
         self.model = WhisperModel(**model_params)
 
         self.log('Model loaded')
@@ -96,22 +125,27 @@ class ASR:
 
         self.log(f"Time taken to load model: {toc - tic:0.4f} seconds")
 
+    def open_mic_stream(self):
+        try:
+            self.mic_stream = self.audio.open(format=self.audio_format,
+                                              channels=self.channels,
+                                              rate=self.rate,
+                                              frames_per_buffer=self.frames_per_buffer,
+                                              input=True,
+                                              input_device_index=self.audio.get_default_input_device_info()["index"])  # Use the default input device
+        except Exception as e:
+            self.log('Error to open mic stream:', e)
+
     def start_recording(self):
         self.is_recording = True
         # Convert the silence duration to the number of audio frames required to detect the silence
         silence_threshold = int(self.silence_duration * self.rate / self.frames_per_buffer)
 
         try:
-            self.stream = self.audio.open(format=self.audio_format,
-                                          channels=self.channels,
-                                          rate=self.rate,
-                                          frames_per_buffer=self.frames_per_buffer,
-                                          input=True,
-                                          input_device_index=self.audio.get_default_input_device_info()["index"])  # Use the default input device
             self.log("Recording...")
 
             while self.is_recording:
-                data = self.stream.read(self.frames_per_buffer, exception_on_overflow=False)
+                data = self.mic_stream.read(self.frames_per_buffer, exception_on_overflow=False)
                 rms = audioop.rms(data, 2)  # width=2 for format=paInt16
 
                 if rms >= self.rms_threshold:
@@ -168,12 +202,101 @@ class ASR:
         except Exception as e:
             self.log('Error:', e)
 
+    # def start_wake_word_listening_thread(self):
+    #     try:
+    #         if self.wake_word:
+    #             if self.wake_word_listening_thread and self.wake_word_listening_thread.is_alive():
+    #                 self.wake_word_listening_thread.join(timeout=2)
+    #
+    #             self.wake_word_listening_thread = threading.Thread(target=self.wake_word.start_listening)
+    #             self.wake_word_listening_thread.start()
+    #     except Exception as e:
+    #         self.log('Error starting listening thread:', e)
+    #
+    #         self.wake_word_listening_thread = None
+    #         self.wake_word_listening_thread = threading.Thread(target=self.wake_word.start_listening)
+    #         self.wake_word_listening_thread.start()
+
     def stop_recording(self):
+        # Restart the wake word listening thread
+        # self.start_wake_word_listening_thread()
+
         self.is_recording = False
-        self.stream.stop_stream()
-        self.stream.close()
-        self.log('Stream closed, recording stopped')
+        # self.mic_stream.stop_stream()
+        # self.mic_stream.close()
+        # self.log('Stream closed, recording stopped')
+        self.log('Recording stopped')
 
     @staticmethod
     def log(*args, **kwargs):
         print('[ASR]', *args, **kwargs)
+
+class WakeWord:
+    def __init__(self, asr, model_path, device='cpu', detection_threshold=0.5):
+        tic = time.perf_counter()
+        self.log('Loading model...')
+
+        self.log(f'Device: {device}')
+
+        self.asr = asr
+        self.model_path = model_path
+        self.device = device
+        self.detection_threshold = detection_threshold
+        self.chunk_size = 1280
+        self.audio = None
+        self.is_listening = False
+
+        # @see https://github.com/dscripka/openWakeWord/blob/main/openwakeword/model.py#L38
+        # @see https://github.com/dscripka/openWakeWord/blob/main/openwakeword/utils.py#L38
+        self.model = WakeWordModel(
+            device=self.device,
+            wakeword_models=[self.model_path],
+            melspec_model_path=os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, 'melspectrogram.onnx'),
+            embedding_model_path=os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, 'embedding.onnx'),
+            ncpu=1,
+            inference_framework='onnx'
+        )
+
+        self.log('Model loaded')
+        toc = time.perf_counter()
+
+        self.log(f"Time taken to load model: {toc - tic:0.4f} seconds")
+
+    def start_listening(self):
+        self.is_listening = True
+
+        print('STARTING LISTENING HERE')
+
+        self.asr.mic_stream = self.asr.audio.open(format=self.asr.audio_format,
+                                          channels=self.asr.channels,
+                                          rate=self.asr.rate,
+                                          frames_per_buffer=self.asr.frames_per_buffer,
+                                          input=True,
+                                          input_device_index=self.asr.audio.get_default_input_device_info()["index"])  # Use the default input device
+
+        try:
+            self.log("Listening...")
+
+            while self.is_listening:
+                # Get audio
+                # Reuse the shared mic audio stream with ASR
+                self.audio = np.frombuffer(self.asr.mic_stream.read(self.chunk_size), dtype=np.int16)
+
+                # Feed to openWakeWord model
+                prediction = self.model.predict(self.audio)
+
+                for mdl in self.model.prediction_buffer.keys():
+                    scores = list(self.model.prediction_buffer[mdl])
+
+                    if scores[-1] > self.detection_threshold:
+                        self.is_listening = False
+                        self.log(f"Wakeword Detected! ({mdl})")
+                        self.asr.start_recording()
+
+        except Exception as e:
+            self.is_listening = False
+            self.log('Error:', e)
+
+    @staticmethod
+    def log(*args, **kwargs):
+        print('[Wake word]', *args, **kwargs)

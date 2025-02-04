@@ -29,6 +29,7 @@ class TCPServer:
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conn = None
         self.addr = None
+        self.wake_word = None
         self.tts = None
         self.asr = None
         self.asr_recording_thread = None
@@ -60,8 +61,7 @@ class TCPServer:
         self.tts = TTS(language='EN',
                        device=get_settings('tts')['device'],
                        config_path=TTS_MODEL_CONFIG_PATH,
-                       ckpt_path=TTS_MODEL_PATH
-                       )
+                       ckpt_path=TTS_MODEL_PATH)
 
     def init_asr(self):
         if not IS_ASR_ENABLED:
@@ -72,19 +72,19 @@ class TCPServer:
             """Remove everything before the wake word if there is (included), remove punctuation right after it, trim and
             capitalize the first letter"""
             lowercased_text = text.lower()
-            for wake_word in self.asr.wake_words:
-                if wake_word in lowercased_text:
-                    start_index = lowercased_text.index(wake_word)
-                    end_index = start_index + len(wake_word)
-                    end_whitespace_index = end_index
-                    while end_whitespace_index < len(text) and (
-                        text[end_whitespace_index] in string.whitespace + string.punctuation):
-                        end_whitespace_index += 1
-                    cleaned_text = text[end_whitespace_index:].strip()
-                    if cleaned_text:  # Check if cleaned_text is not empty
-                        return cleaned_text[0].upper() + cleaned_text[1:]
-                    else:
-                        return ""  # Return an empty string if cleaned_text is empty
+            # for wake_word in self.asr.wake_words:
+            #     if wake_word in lowercased_text:
+            #         start_index = lowercased_text.index(wake_word)
+            #         end_index = start_index + len(wake_word)
+            #         end_whitespace_index = end_index
+            #         while end_whitespace_index < len(text) and (
+            #             text[end_whitespace_index] in string.whitespace + string.punctuation):
+            #             end_whitespace_index += 1
+            #         cleaned_text = text[end_whitespace_index:].strip()
+            #         if cleaned_text:  # Check if cleaned_text is not empty
+            #             return cleaned_text[0].upper() + cleaned_text[1:]
+            #         else:
+            #             return ""  # Return an empty string if cleaned_text is empty
             return text
 
         def transcribed_callback(text):
@@ -174,6 +174,8 @@ class TCPServer:
                         res = method(data)
 
                         self.send_tcp_message(res)
+                    else:
+                        self.log(f'Method "{method}" not found')
             finally:
                 self.log(f'Client disconnected: {self.addr}')
                 self.conn.close()
