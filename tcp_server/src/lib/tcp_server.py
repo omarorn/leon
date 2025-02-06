@@ -4,7 +4,6 @@ import os
 from typing import Union
 import time
 import re
-import string
 import threading
 
 import lib.nlp as nlp
@@ -68,32 +67,13 @@ class TCPServer:
             self.log('ASR is disabled')
             return
 
-        def clean_up_speech(text: str) -> str:
-            """Remove everything before the wake word if there is (included), remove punctuation right after it, trim and
-            capitalize the first letter"""
-            lowercased_text = text.lower()
-            # for wake_word in self.asr.wake_words:
-            #     if wake_word in lowercased_text:
-            #         start_index = lowercased_text.index(wake_word)
-            #         end_index = start_index + len(wake_word)
-            #         end_whitespace_index = end_index
-            #         while end_whitespace_index < len(text) and (
-            #             text[end_whitespace_index] in string.whitespace + string.punctuation):
-            #             end_whitespace_index += 1
-            #         cleaned_text = text[end_whitespace_index:].strip()
-            #         if cleaned_text:  # Check if cleaned_text is not empty
-            #             return cleaned_text[0].upper() + cleaned_text[1:]
-            #         else:
-            #             return ""  # Return an empty string if cleaned_text is empty
-            return text
-
         def transcribed_callback(text):
-            cleaned_text = clean_up_speech(text)
-            self.log('Cleaned speech:', cleaned_text)
+            # cleaned_text = clean_up_speech(text)
+            self.log('Cleaned speech:', text)
             self.send_tcp_message({
                 'topic': 'asr-new-speech',
                 'data': {
-                    'text': cleaned_text
+                    'text': text
                 }
             })
 
@@ -115,9 +95,6 @@ class TCPServer:
 
         def active_listening_disabled_callback():
             self.log('Active listening disabled')
-
-            self.asr.stop_recording()
-
             self.send_tcp_message({
                 'topic': 'asr-active-listening-disabled',
                 'data': {}
