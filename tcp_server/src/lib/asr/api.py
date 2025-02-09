@@ -1,18 +1,17 @@
-import os
 import pyaudio
 import audioop
 import time
 import torch
 import numpy as np
-from openwakeword.model import Model as WakeWordModel
 from faster_whisper import WhisperModel
 
-from ..constants import ASR_MODEL_PATH, IS_WAKE_WORD_ENABLED, WAKE_WORD_MODEL_FOLDER_PATH
+from ..constants import ASR_MODEL_PATH
 from ..utils import ThrottledCallback, is_macos, get_settings
 
 
 class ASR:
     def __init__(self,
+                 tcp_server=None,
                  # @see https://github.com/SYSTRAN/faster-whisper/blob/master/faster_whisper/transcribe.py
                  # auto, cpu, cuda
                  device='auto',
@@ -40,8 +39,8 @@ class ASR:
         if device == 'cpu':
             compute_type = 'int8_float32'
 
+        self.tcp_server = tcp_server
         self.wake_word = None
-        self.wake_word_listening_thread = None
         self.compute_type = compute_type
         self.is_recording = False
 
@@ -80,7 +79,6 @@ class ASR:
         self.audio = pyaudio.PyAudio()
         self.mic_stream = None
         self.model = None
-        self.is_wake_word_enabled = False
 
         model_params = {
             'model_size_or_path': ASR_MODEL_PATH,
@@ -91,17 +89,6 @@ class ASR:
         if self.device == 'cpu':
             model_params['cpu_threads'] = 4
 
-        should_init_wake_word = True
-        wake_word_model_name = get_settings('wake_word')['model_file_name']
-        wake_word_model_path = os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, wake_word_model_name)
-
-        if not IS_WAKE_WORD_ENABLED:
-            self.log('Wake word is disabled')
-            should_init_wake_word = False
-        if not os.path.exists(wake_word_model_path):
-            self.log(f'Wake word model not found at {wake_word_model_path}')
-            should_init_wake_word = False
-
         self.open_mic_stream()
 
         self.model = WhisperModel(**model_params)
@@ -109,16 +96,7 @@ class ASR:
         self.log('Model loaded')
         toc = time.perf_counter()
 
-        self.log(f"Time taken to load model: {toc - tic:0.4f} seconds")
-
-        if should_init_wake_word:
-            self.wake_word = WakeWord(
-                asr=self,
-                model_path=wake_word_model_path,
-                device=get_settings('wake_word')['device'],
-                detection_threshold=get_settings('wake_word')['detection_threshold']
-            )
-            self.wake_word.start_listening()
+        self.log(f'Time taken to load model: {toc - tic:0.4f} seconds')
 
     def open_mic_stream(self):
         try:
@@ -127,17 +105,23 @@ class ASR:
                                               rate=self.rate,
                                               frames_per_buffer=self.frames_per_buffer,
                                               input=True,
-                                              input_device_index=self.audio.get_default_input_device_info()["index"])  # Use the default input device
+                                              input_device_index=self.audio.get_default_input_device_info()['index'])  # Use the default input device
         except Exception as e:
             self.log('Error to open mic stream:', e)
 
     def start_recording(self):
+        if self.wake_word:
+            # Make sure to stop the wake word detection before recording
+            # otherwise it will loop for the wake word and create conflict
+            # on the audio stream
+            self.wake_word.stop_listening()
+
         self.is_recording = True
         # Convert the silence duration to the number of audio frames required to detect the silence
         silence_threshold = int(self.silence_duration * self.rate / self.frames_per_buffer)
 
         try:
-            self.log("Recording...")
+            self.log('Recording...')
 
             while self.is_recording:
                 data = self.mic_stream.read(self.frames_per_buffer, exception_on_overflow=False)
@@ -178,7 +162,7 @@ class ASR:
                             segments, info = self.model.transcribe(audio_data, **transcribe_params)
 
                             for segment in segments:
-                                self.log("[%.2fs -> %.2fs] %s" % (segment.start, segment.end, segment.text))
+                                self.log('[%.2fs -> %.2fs] %s' % (segment.start, segment.end, segment.text))
                                 self.complete_text += segment.text
 
                             self.transcribed_callback(self.complete_text)
@@ -191,97 +175,43 @@ class ASR:
 
                         should_stop_active_listening = self.is_active_listening_enabled and time.time() - self.silence_start_time > self.active_listening_duration
                         if should_stop_active_listening:
-                            self.log('Active listening disabled')
                             self.is_active_listening_enabled = False
-                            self.stop_recording()
                             self.active_listening_disabled_callback()
+                            # Do not add anything after this line because it will be ignored
+                            # as it loops for the wake word
+                            self.stop_recording()
         except Exception as e:
             self.log('Error:', e)
 
     def stop_recording(self):
-        if self.wake_word:
-            self.wake_word.reset_model_state()
-
-        self.is_recording = False
-        # self.mic_stream.stop_stream()
-        # self.mic_stream.close()
-        # self.log('Stream closed, recording stopped')
         self.log('Recording stopped')
 
-        if self.is_wake_word_enabled:
-            self.wake_word.start_listening()
+        if self.wake_word:
+            self.wake_word.reset_model_state()
+            if self.wake_word.is_enabled:
+                # Do not add anything after this line because it will be ignored
+                # as it loops for the wake word
+                self.wake_word.start_listening()
+        else:
+            self.is_recording = False
+            # self.mic_stream.stop_stream()
+            # self.mic_stream.close()
+            # self.log('Stream closed, recording stopped')
+
+        # Make sure to wait for the recording thread to join before starting a new recording.
+        # Only needed when the wake word detection is enabled
+        if (
+            self.wake_word and
+            self.wake_word.is_enabled and
+            self.tcp_server.asr_recording_thread and
+            self.tcp_server.asr_recording_thread.is_alive()
+        ):
+            # The thread is only used when received TCP message from the core,
+            # hence it is not used when triggered by the wake word.
+            # If we do not "join" it, it'll duplicate the recording loop
+            self.log('Join recording thread')
+            self.tcp_server.asr_recording_thread.join()
 
     @staticmethod
     def log(*args, **kwargs):
         print('[ASR]', *args, **kwargs)
-
-class WakeWord:
-    def __init__(self, asr, model_path, device='cpu', detection_threshold=0.5):
-        tic = time.perf_counter()
-        self.log('Loading model...')
-
-        self.log(f'Device: {device}')
-
-        self.asr = asr
-        self.model_path = model_path
-        self.device = device
-        self.detection_threshold = detection_threshold
-        self.chunk_size = 1280
-        self.audio = None
-        self.is_listening = False
-
-        # @see https://github.com/dscripka/openWakeWord/blob/main/openwakeword/model.py#L38
-        # @see https://github.com/dscripka/openWakeWord/blob/main/openwakeword/utils.py#L38
-        self.model = WakeWordModel(
-            device=self.device,
-            wakeword_models=[self.model_path],
-            melspec_model_path=os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, 'melspectrogram.onnx'),
-            embedding_model_path=os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, 'embedding.onnx'),
-            ncpu=1,
-            inference_framework='onnx'
-        )
-
-        self.log('Model loaded')
-        toc = time.perf_counter()
-
-        self.log(f"Time taken to load model: {toc - tic:0.4f} seconds")
-
-        self.asr.is_wake_word_enabled = True
-
-    def reset_model_state(self):
-        """Reset the wake word model's prediction buffer to avoid false triggers."""
-        for mdl in self.model.prediction_buffer.keys():
-            self.model.prediction_buffer[mdl] = []
-
-    def start_listening(self):
-        self.is_listening = True
-        self.audio = None
-
-        self.reset_model_state()
-
-        try:
-            self.log("Listening...")
-
-            while self.is_listening:
-                # Get audio
-                # Reuse the shared mic audio stream with ASR
-                self.audio = np.frombuffer(self.asr.mic_stream.read(self.chunk_size), dtype=np.int16)
-
-                # Feed to openWakeWord model
-                prediction = self.model.predict(self.audio)
-
-                for mdl in self.model.prediction_buffer.keys():
-                    scores = list(self.model.prediction_buffer[mdl])
-
-                    if scores[-1] > self.detection_threshold:
-                        self.log(f"Wakeword Detected! ({mdl})")
-                        self.is_listening = False
-                        self.asr.start_recording()
-
-        except Exception as e:
-            self.is_listening = False
-            self.log('Error:', e)
-
-    @staticmethod
-    def log(*args, **kwargs):
-        print('[Wake word]', *args, **kwargs)

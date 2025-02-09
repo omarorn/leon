@@ -8,11 +8,14 @@ import threading
 
 import lib.nlp as nlp
 from .utils import get_settings
+from .wake_word.api import WakeWord
 from .asr.api import ASR
 from .tts.api import TTS
 from .constants import (
     TTS_MODEL_CONFIG_PATH,
     TTS_MODEL_FOLDER_PATH,
+    WAKE_WORD_MODEL_FOLDER_PATH,
+    IS_WAKE_WORD_ENABLED,
     IS_TTS_ENABLED,
     TMP_PATH,
     IS_ASR_ENABLED
@@ -100,11 +103,29 @@ class TCPServer:
                 'data': {}
             })
 
-        self.asr = ASR(device=get_settings('asr')['device'],
+        self.asr = ASR(tcp_server=self,
+                       device=get_settings('asr')['device'],
                        interrupt_leon_speech_callback=interrupt_leon_speech_callback,
                        transcribed_callback=transcribed_callback,
                        end_of_owner_speech_callback=end_of_owner_speech_callback,
                        active_listening_disabled_callback=active_listening_disabled_callback)
+
+        if not IS_WAKE_WORD_ENABLED:
+            self.log('Wake word is disabled')
+            return
+
+        wake_word_model_name = get_settings('wake_word')['model_file_name']
+        wake_word_model_path = os.path.join(WAKE_WORD_MODEL_FOLDER_PATH, wake_word_model_name)
+
+        self.asr.wake_word = WakeWord(
+            asr=self.asr,
+            model_path=wake_word_model_path,
+            device=get_settings('wake_word')['device'],
+            detection_threshold=get_settings('wake_word')['detection_threshold']
+        )
+        # Do not add anything after this line because it will be ignored
+        # as it loops for the wake word
+        self.asr.wake_word.start_listening()
 
     def init(self):
         try:
@@ -173,8 +194,9 @@ class TCPServer:
             self.log('ASR is not initialized yet. Waiting for 2 seconds before starting recording...')
             time.sleep(2)
 
-        self.asr_recording_thread = threading.Thread(target=self.asr.start_recording)
-        self.asr_recording_thread.start()
+        if self.asr.is_recording is False:
+            self.asr_recording_thread = threading.Thread(target=self.asr.start_recording)
+            self.asr_recording_thread.start()
 
         return {
             'topic': 'asr-started-recording',
@@ -226,6 +248,9 @@ class TCPServer:
         }
 
     def leon_speech_audio_ended(self, audio_duration: float) -> dict:
+        if not self.asr:
+            self.log('ASR is None, cannot update active listening duration')
+
         if self.asr:
             if not audio_duration:
                 audio_duration = 0
