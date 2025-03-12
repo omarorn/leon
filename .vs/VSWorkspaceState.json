@@ -1,0 +1,12 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\.github\\workflows",
+    "\\server",
+    "\\server\\src",
+    "\\server\\src\\core",
+    "\\server\\src\\helpers",
+    "\\server\\src\\schemas"
+  ],
+  "PreviewInSolutionExplorer": false
+}
